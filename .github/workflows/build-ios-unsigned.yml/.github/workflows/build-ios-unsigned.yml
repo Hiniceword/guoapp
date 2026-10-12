@@ -1,0 +1,77 @@
+# ============================================================
+# 真果鉴 —— iOS 未签名 IPA 云构建
+# ============================================================
+# 在你自己 fork 的仓库里新建文件：
+#     .github/workflows/build-ios-unsigned.yml
+# 把本文件内容整段粘进去，提交，然后
+#     Actions → Build iOS IPA → Run workflow
+#
+# 原理：GitHub 对公开仓库的 macOS runner 免费、不限分钟。
+# 这里借云 Mac 编译，你本地只需要浏览器。
+#
+# 默认构建「真果鉴」（全部站源）。
+# 想改「红果鉴」（仅红果站源），把 --all-sources 删掉即可。
+#
+# 产物在 Actions 运行页底部 Artifacts 下载，是「未签名」IPA，
+# 需用 Sideloadly / AltStore 自签后才能装进 iPhone。
+# ============================================================
+
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: native/go.mod
+          cache-dependency-path: native/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+
+      - name: 安装 CocoaPods
+        run: |
+          pod --version || (sudo gem install cocoapods --no-document && pod --version)
+
+      - name: 打印环境信息
+        run: |
+          sw_vers
+          xcodebuild -version
+          go version
+          flutter --version
+          pod --version
+
+      # build_ios.py 会依次完成：
+      #   1) go build -buildmode=c-archive  → ios/arm64 的 libDuanjuCore.a
+      #   2) xcodebuild -create-xcframework  → ios/DuanjuCore/DuanjuCore.xcframework
+      #      （这个 xcframework 被 .gitignore，所以必须现场编译）
+      #   3) flutter pub get --enforce-lockfile
+      #   4) pod install
+      #   5) flutter build ios --release --no-codesign
+      #   6) 打包 ipa + app.zip + SHA256SUMS.txt 到 dist/ios
+      - name: 构建真果鉴 iOS IPA（全站源）
+        run: python3 scripts/build_ios.py --all-sources
+
+      - name: 列出产物
+        if: always()
+        run: ls -lh dist/ios 2>/dev/null || echo 'dist/ios 不存在 —— 构建未走到打包阶段'
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-ipa
+          path: dist/ios/*
+          if-no-files-found: warn
+          retention-days: 14
